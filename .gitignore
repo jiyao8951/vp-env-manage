@@ -1,0 +1,22 @@
+# 依赖
+node_modules/
+
+# 构建 / 打包产物
+dist/
+dist-release/
+src-tauri/target/
+
+# Tauri 自动生成的 schema
+src-tauri/gen/schemas/
+
+# 本地脚本与缓存
+.scripts/
+
+# 编辑器 / 工具
+.workbuddy-ai/
+/bun.lock
+
+# 日志与临时文件
+*.log
+.DS_Store
+Thumbs.db
