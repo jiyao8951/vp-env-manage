@@ -492,7 +492,8 @@ export default function EnvManagerView({
   } | null>(null);
 
   const resolved = ensure?.path ?? "";
-  const version = ensure?.version ? `vp v${ensure.version}` : "";
+  const version = ensure?.version ?? "";
+  const versionLabel = version ? `vp v${version}` : "";
   const ensureOk = !!ensure?.ok && !!ensure?.compliant;
   const hasData = !!current || !!installed;
 
@@ -1101,7 +1102,7 @@ export default function EnvManagerView({
           <p className="page-desc">
             {resolved ? (
               <>
-                {version} ·{" "}
+                {versionLabel} ·{" "}
                 <code className="path-text" title={resolved}>
                   {resolved}
                 </code>
@@ -1640,7 +1641,7 @@ export default function EnvManagerView({
                     <span>最近检查</span>
                     <span className="check-value">
                       {lastLoadedAt ? clock(lastLoadedAt) : "—"}
-                      <span className="muted small"> · vp {version || "—"}</span>
+                      <span className="muted small"> · {versionLabel || "vp —"}</span>
                     </span>
                   </div>
                   <div className="check-item">
@@ -1662,7 +1663,7 @@ export default function EnvManagerView({
           </div>
 
           <div className="update-strip">
-            <span className="update-version">Vite+ {version || "未就绪"}</span>
+            <span className="update-version">Vite+ {version ? `v${version}` : "未就绪"}</span>
             <span className="update-state">
               {upgradeCheck
                 ? upgradeCheck.up_to_date
