@@ -7,6 +7,8 @@
 - 数据：全部存在本机 `%APPDATA%\dev.flowdeck.app\config.json`，不联网上报
 - 许可：MIT
 
+![概览页](docs/概览.png)
+
 ## 目录
 
 - [界面结构](#界面结构)
@@ -62,9 +64,15 @@
 | 可安装版本 | `vp env list-remote` 结果按**大版本分组**，每组默认展示前 6 组、组内按需渲染，标记 LTS / latest / 最新 LTS / 已装 / 系统默认 / 当前；拉取失败时回退上次缓存并标注时间                 |
 | 更多工具   | `doctor` / `print` / `which` / `exec` / `clean` / `setup` / `unpin` / `default --unset` / `on` `off` / `pin` / `use`                                                                  |
 
+![环境页 · 已安装](docs/环境.png)
+
+![环境页 · 可安装版本](docs/环境-可安装.png)
+
 项目页会只读解析 `.nvmcp` / `.node-version` / `.nvmrc` 与根 `package.json` 的 `engines` / `volta` /
 `packageManager` / `devEngines`，展示实际命中值、生效层级、被覆盖项与冲突；pin / unpin 前给出文件级
 diff 预览并自动备份到应用数据目录的 `pin-backups/`，目标文件位于项目目录之外时会明确标注为危险操作。
+
+![项目页](docs/项目.png)
 
 命令语义速查（界面里每条按钮都有对应说明）：
 
@@ -102,6 +110,8 @@ diff 预览并自动备份到应用数据目录的 `pin-backups/`，目标文件
 
 ### 2. 取消与诊断
 
+![诊断页](docs/诊断.png)
+
 - **真取消**：运行中的 `vp` 子进程会在后端注册 PID，点取消后终止**整个进程树**并确认退出；
   界面如实反馈是否仍有残留，残留时给出 `vp env list` / `vp env clean` 的后续建议
 - **结构化诊断**：`doctor` 按检查项、`which` 按工具路径、`print` 按键值对展示，不再只丢原始文本；
@@ -117,6 +127,8 @@ diff 预览并自动备份到应用数据目录的 `pin-backups/`，目标文件
 - **窗口置顶**：标题栏按钮切换，状态写入配置
 
 ### 4. 设置页
+
+![设置页](docs/设置.png)
 
 启动与窗口（窗口置顶）、`vp` 可执行文件路径（浏览 + 检测）、
 显示并打开配置目录、关于信息。
