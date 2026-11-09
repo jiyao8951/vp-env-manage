@@ -137,12 +137,12 @@ diff 预览并自动备份到应用数据目录的 `pin-backups/`，目标文件
 
 | 项       | 版本                                                              |
 | -------- | ----------------------------------------------------------------- |
-| 桌面框架 | Tauri 2.12.0（`tauri-build` 2.7.0）                               |
-| 前端 IPC | `@tauri-apps/api` 2.12.1                                          |
-| 插件     | `tauri-plugin-dialog` 2.8.0、`tauri-plugin-single-instance` 2.5.2 |
+| 桌面框架 | Tauri 2.12.5（`tauri-build` 2.7.4）                               |
+| 前端 IPC | `@tauri-apps/api` 2.12.4                                          |
+| 插件     | `tauri-plugin-dialog` 2.8.4、`tauri-plugin-single-instance` 2.5.5 |
 | 前端     | React 19.3.0 + Vite 8.3.4                                         |
 | 语言     | TypeScript 7.0.2（原生 Go 版编译器 tsgo）                         |
-| 工具链   | Rust 1.99.0 `stable-x86_64-pc-windows-msvc` · bun 1.4.2           |
+| 工具链   | Rust 1.99.1 `stable-x86_64-pc-windows-msvc` · bun 1.4.2           |
 
 > TypeScript 7.0.2 即 Go 原生编译器，npm 包名仍是 `typescript`，`bun run tsgo` 通过
 > `node ./node_modules/typescript/bin/tsc` 调用内置二进制。

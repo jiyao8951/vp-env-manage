@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "FlowDeck - 桌面端 Vite+ 环境管理器"
 authors = ["FlowDeck"]
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.99.1"
 # 使用 v1 feature 解析器：让 build-dependencies 与常规依赖共享 feature，
 # 下面的 indexmap 兼容修复才能同时作用于 tauri-build 链路。
 resolver = "1"
@@ -20,15 +20,15 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 custom-protocol = ["tauri/custom-protocol"]
 
 [build-dependencies]
-tauri-build = { version = "2.7.0", features = [] }
+tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
-tauri = { version = "2.12.0", features = [] }
-tauri-plugin-dialog = "2.8.0"
+tauri = { version = "2.12.5", features = [] }
+tauri-plugin-dialog = "2.8.4"
 # 单实例：重复启动时聚焦已有窗口，而不是再起一个实例
-tauri-plugin-single-instance = "2.3.4"
+tauri-plugin-single-instance = "2.5.5"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1.0.151"
+serde_json = "1.0.154"
 # 版本约束语义：区分 `>=26.13.0` 这类范围与 `26.13.0` 这类具体版本，
 # 避免把不同来源的 pin 误判成冲突（依赖已随 tauri 链进入 Cargo.lock）
 semver = "1.0.28"
