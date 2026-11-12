@@ -4,7 +4,7 @@ import LogoMark from "./Logo";
 
 const win = getCurrentWindow();
 
-function Icon({ d, size = 10 }: { d: string; size?: number }) {
+function Icon({ d, size = 12 }: { d: string; size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 10 10" aria-hidden="true">
       <path d={d} stroke="currentColor" strokeWidth={1} fill="none" strokeLinecap="round" />
@@ -102,7 +102,7 @@ export default function TitleBar({ subtitle, alwaysOnTop, onToggleAlwaysOnTop }:
             aria-pressed={!!alwaysOnTop}
             onClick={onToggleAlwaysOnTop}
           >
-            <Icon d="M2.1 2.1 H7.9 M5 2.1 V8.3 M3.3 4.1 L5 2.1 L6.7 4.1" size={10} />
+            <Icon d="M2.1 2.1 H7.9 M5 2.1 V8.3 M3.3 4.1 L5 2.1 L6.7 4.1" size={12} />
           </button>
         ) : null}
         <button
@@ -111,7 +111,7 @@ export default function TitleBar({ subtitle, alwaysOnTop, onToggleAlwaysOnTop }:
           onClick={() => void win.minimize()}
           aria-label="最小化"
         >
-          <Icon d="M0.8 5 H9.2" size={10} />
+          <Icon d="M0.8 5 H9.2" size={12} />
         </button>
         <button
           className="tb-btn close"
@@ -119,7 +119,7 @@ export default function TitleBar({ subtitle, alwaysOnTop, onToggleAlwaysOnTop }:
           onClick={() => void win.close()}
           aria-label="退出 FlowDeck"
         >
-          <Icon d="M0.9 0.9 L9.1 9.1 M9.1 0.9 L0.9 9.1" size={10} />
+          <Icon d="M0.9 0.9 L9.1 9.1 M9.1 0.9 L0.9 9.1" size={12} />
         </button>
       </div>
     </div>

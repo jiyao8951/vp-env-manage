@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "FlowDeck",
-        "width": 1200,
-        "height": 660,
+        "width": 1520,
+        "height": 940,
         "resizable": false,
         "maximizable": false,
         "minimizable": true,

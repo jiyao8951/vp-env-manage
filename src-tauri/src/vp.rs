@@ -37,9 +37,10 @@ pub const TIMEOUT_BOOTSTRAP: Duration = Duration::from_secs(900);
 pub const TIMEOUT_PROJECT: Duration = Duration::from_secs(600);
 
 /// 环境模块要求的最低 Vite+ 版本：1.5.0 起 `vp env doctor` 发现问题会以退出码 1 结束，
-/// 客户端据此判定健康状态；更早的版本可能把失败当成成功。
-pub const MIN_VERSION: &str = "1.5.0";
-const MIN_VERSION_TUPLE: (u64, u64, u64) = (1, 5, 0);
+/// 客户端据此判定健康状态；1.5.1 修复了 `vp env use` / dist-tag 查询的 shell 注入
+/// （GHSA-p79r-mf8q-r78h，高危），本客户端正是该命令族的入口，因此要求 ≥ 1.5.1。
+pub const MIN_VERSION: &str = "1.5.1";
+const MIN_VERSION_TUPLE: (u64, u64, u64) = (1, 5, 1);
 
 /// 环境操作互斥：install / uninstall / pin / default / clean / setup 等
 /// 会改环境的命令共用一把锁，重复操作直接拒绝，避免并发写同一个安装目录。
@@ -236,7 +237,8 @@ fn dirs_from(path_env: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-fn find_in_dirs<I: IntoIterator<Item = PathBuf>>(dirs: I) -> Option<PathBuf> {
+fn find_all_in_dirs<I: IntoIterator<Item = PathBuf>>(dirs: I) -> Vec<PathBuf> {
+    let mut out = Vec::new();
     for base in dirs {
         for ext in EXTS {
             let candidate = if ext.is_empty() {
@@ -245,11 +247,11 @@ fn find_in_dirs<I: IntoIterator<Item = PathBuf>>(dirs: I) -> Option<PathBuf> {
                 base.join(format!("vp{ext}"))
             };
             if looks_executable(&candidate) {
-                return Some(candidate);
+                out.push(candidate);
             }
         }
     }
-    None
+    out
 }
 
 /// 进程启动时继承的 PATH（可能已经过期）
@@ -410,25 +412,73 @@ pub fn candidates() -> Vec<PathBuf> {
     out
 }
 
+/// 轻量身份校验：执行 `vp --version`，最多等 3 秒，只判断输出是否来自 Vite+。
+/// 不走 `run_core`，避免改写「当前运行中的命令」状态而干扰长任务取消。
+/// PATH 里可能混入同名的其它程序，只看文件存在会误认，导致所有 env 子命令失败。
+fn identity_ok(path: &Path) -> bool {
+    let mut cmd = new_command(path);
+    cmd.arg("--version");
+    cmd.env("VP_NO_COLOR", "1");
+    cmd.env("NO_COLOR", "1");
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return false;
+        }
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => thread::sleep(Duration::from_millis(25)),
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+    let mut text = String::new();
+    if let Some(out) = child.stdout.take() {
+        for line in BufReader::new(out).lines().map_while(Result::ok) {
+            text.push_str(&line);
+            text.push('\n');
+        }
+    }
+    if let Some(err) = child.stderr.take() {
+        for line in BufReader::new(err).lines().map_while(Result::ok) {
+            text.push_str(&line);
+            text.push('\n');
+        }
+    }
+    let _ = child.wait();
+    version_identity(&text)
+}
+
 /// 定位 `vp` 可执行文件。优先级：用户配置 > 环境变量 VP_PATH > 全局 PATH（含注册表）
 /// > 已知安装位置 > 项目内 node_modules/.bin（仅作最后兜底）。
+/// 每个候选都要通过 `--version` 身份校验；校验失败的候选会被跳过，继续尝试下一个。
 /// 之所以把本地 vp 排到最后：它不提供 `env` 子命令，误用它会让整个环境管理不可用。
 pub fn resolve(custom: Option<&str>) -> Result<PathBuf, String> {
-    if let Some(c) = custom {
-        let c = c.trim();
-        if !c.is_empty() {
-            let p = PathBuf::from(c);
-            if looks_executable(&p) {
-                return Ok(p);
-            }
-            return Err(format!("配置的 vp 路径不存在或不是文件：{c}"));
+    let mut ordered: Vec<PathBuf> = Vec::new();
+
+    // 显式配置与环境变量也只是「优先级更高的候选」，同样需要校验身份
+    if let Some(c) = custom.map(str::trim).filter(|s| !s.is_empty()) {
+        let p = PathBuf::from(c);
+        if looks_executable(&p) {
+            ordered.push(p);
         }
     }
     if let Ok(p) = std::env::var("VP_PATH") {
         if let Some(entry) = clean_path_entry(&p) {
             let pb = PathBuf::from(entry);
             if looks_executable(&pb) {
-                return Ok(pb);
+                ordered.push(pb);
             }
         }
     }
@@ -437,21 +487,25 @@ pub fn resolve(custom: Option<&str>) -> Result<PathBuf, String> {
     dirs.extend(user_path_dirs());
     let (global_dirs, local_dirs): (Vec<PathBuf>, Vec<PathBuf>) =
         dirs.into_iter().partition(|d| !is_local_package_binary(d));
-    if let Some(p) = find_in_dirs(global_dirs) {
-        return Ok(p);
-    }
-    for p in known_locations() {
-        if looks_executable(&p) {
+    ordered.extend(find_all_in_dirs(global_dirs));
+    ordered.extend(known_locations().into_iter().filter(|p| looks_executable(p)));
+    ordered.extend(find_all_in_dirs(local_dirs));
+
+    let mut seen = std::collections::HashSet::new();
+    let mut tried = 0usize;
+    for p in ordered {
+        if !seen.insert(normalize_path_key(&p)) {
+            continue;
+        }
+        tried += 1;
+        if identity_ok(&p) {
             return Ok(p);
         }
     }
-    if let Some(p) = find_in_dirs(local_dirs) {
-        return Ok(p);
-    }
-    Err(
-        "未找到 Vite+ (vp) 可执行文件。请先安装 Vite+，或在设置中手动指定 vp.exe 路径。"
-            .to_string(),
-    )
+    Err(format!(
+        "在 {} 个候选位置中没有找到通过身份校验的 Vite+ (vp)。请先安装 Vite+，或检查 PATH 里是否存在同名的其它程序。",
+        tried
+    ))
 }
 
 // ------------------------------------------------------- vp 副本分类 / 冲突判定
@@ -760,7 +814,7 @@ pub struct PathAudit {
     pub shim_dir: String,
     pub tools: Vec<ToolPathAudit>,
     pub warnings: Vec<String>,
-    /// 所有 vp 副本及其归属，供环境 / 诊断页以普通信息行展示
+    /// 所有 vp 副本及其归属，供系统页与设置页以普通信息行展示
     pub vp_candidates: Vec<VpCandidate>,
 }
 
@@ -1667,7 +1721,7 @@ fn ensure_failed(mut result: EnsureResult, mut logs: Vec<String>, message: Strin
     result
 }
 
-/// 启动自检：确保 vp 存在且版本 >= 1.5.0。
+/// 启动自检：确保 vp 存在且版本 >= MIN_VERSION（当前 1.5.1）。
 /// `allow_mutation = false` 时只检测，不安装 / 不升级（启动路径用它）；
 /// 用户明确点击「自动安装 / 升级」时才传 true。
 /// `progress(phase, message)` 用于向前端推送当前步骤。
@@ -1698,7 +1752,7 @@ where
                 return ensure_failed(
                     result,
                     logs,
-                    "未检测到 Vite+ (vp)。点击「自动安装 / 升级」可安装最新版，或在设置中手动指定 vp 路径。"
+                    "未检测到 Vite+ (vp)。点击「补全运行环境」可安装最新版；也可在命令行执行安装脚本后重新检测。"
                         .to_string(),
                 );
             }
@@ -2192,7 +2246,10 @@ mod tests {
         assert_eq!(parse_version("1.4"), Some((1, 4, 0)));
         assert!(!is_supported("vp v1.3.9"));
         assert!(!is_supported("vp v1.4.0"));
-        assert!(is_supported("vp v1.5.0"));
+        // 1.5.1 是最低门槛：1.5.0 缺 `vp env use` 的高危注入修复，必须判为不合规
+        assert!(!is_supported("vp v1.5.0"));
+        assert!(is_supported("vp v1.5.1"));
+        assert!(is_supported("vp v1.5.10"));
         assert!(is_supported("vp v2.0.0"));
     }
 

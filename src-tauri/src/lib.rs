@@ -246,7 +246,7 @@ async fn vp_probe(vp_path: Option<String>) -> Result<VpProbe, String> {
     .map_err(|e| format!("任务执行失败: {e}"))
 }
 
-/// 启动自检：确保 vp 存在且 >= 1.4.0。
+/// 启动自检：确保 vp 存在且不低于 `vp::MIN_VERSION`（1.5.1）。
 /// `allow_mutation = false`（启动默认）只检测，不安装 / 不升级；
 /// 用户点击「自动安装 / 升级」时传 true。每一步通过 `flowdeck:vp-status` 事件推给前端。
 #[tauri::command]
@@ -817,25 +817,33 @@ fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
-/// 固定画布尺寸（逻辑像素）。窗口不可拉伸，但小屏或高缩放比下若按 1200×660
-/// 会超出显示器工作区，就按工作区上限收缩，避免窗口比屏幕还大。
-fn enforce_fixed_size(window: &tauri::WebviewWindow) {
-    const DESIGN_W: f64 = 1200.0;
-    const DESIGN_H: f64 = 660.0;
+/// 界面设计基准尺寸（逻辑像素）：1520×940。
+/// 窗口按这个尺寸打开并居中，不随显示器分辨率放大——固定画布下信息密度和
+/// 操作距离才是可控的；分辨率更高的屏幕只是窗口周围多出桌面空白。
+/// 若显示器工作区（已折算 DPI 缩放）装不下，则收缩到工作区内，
+/// 由前端检测到可用区域不足时弹窗提示「分辨率 / 缩放不达标」。
+const DESIGN_W: f64 = 1520.0;
+const DESIGN_H: f64 = 940.0;
+/// 与工作区边缘保留的最小间距
+const WINDOW_EDGE: f64 = 16.0;
 
+fn apply_initial_window_size(window: &tauri::WebviewWindow) {
     let mut width = DESIGN_W;
     let mut height = DESIGN_H;
     if let Ok(Some(monitor)) = window.current_monitor() {
         let scale = monitor.scale_factor();
         if scale > 0.0 {
             let area = monitor.work_area();
-            let max_w = area.size.width as f64 / scale;
-            let max_h = area.size.height as f64 / scale;
-            width = width.min(max_w);
-            height = height.min(max_h);
+            let avail_w = area.size.width as f64 / scale;
+            let avail_h = area.size.height as f64 / scale;
+            width = (avail_w - WINDOW_EDGE * 2.0).clamp(960.0, DESIGN_W);
+            height = (avail_h - WINDOW_EDGE * 2.0).clamp(600.0, DESIGN_H);
         }
     }
-    let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)));
+    let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+        width.round(),
+        height.round(),
+    )));
     let _ = window.center();
 }
 
@@ -856,10 +864,12 @@ pub fn run() {
             let store = handle.state::<config::ConfigStore>();
             let cfg = config::load(&handle, &store).unwrap_or_default();
 
-            // 恢复「始终置顶」，并按显示器工作区校正固定画布尺寸
+            // 恢复「始终置顶」，按固定设计尺寸（必要时收缩到工作区）设置后再显示窗口，
+            // 避免首帧先以配置里的默认尺寸闪一下
             if let Some(w) = handle.get_webview_window("main") {
                 let _ = w.set_always_on_top(cfg.always_on_top);
-                enforce_fixed_size(&w);
+                apply_initial_window_size(&w);
+                let _ = w.show();
             }
 
             Ok(())

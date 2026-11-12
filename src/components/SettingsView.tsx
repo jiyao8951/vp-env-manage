@@ -1,14 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   configDir,
+  envPathAudit,
   errText,
   launchTarget,
-  pickVpBinary,
   quitApp,
-  vpProbe,
   type Config,
+  type PathAudit,
+  type VpEnsureResult,
 } from "../lib/api";
 import { APP_NAME, APP_VERSION } from "../lib/appMeta";
+import type { Notify } from "../lib/envShared";
 import type { ThemeMode } from "../lib/theme";
 import Icon from "./Icon";
 import LogoMark from "./Logo";
@@ -21,67 +23,72 @@ const THEMES: { id: ThemeMode; label: string; desc: string }[] = [
 
 interface Props {
   config: Config;
-  onPatch: (patch: Partial<Config>) => void;
-  notify: (kind: "info" | "success" | "error", title: string, text?: string) => void;
+  notify: Notify;
   /** 切换窗口置顶（同时写配置） */
   onToggleAlwaysOnTop: () => void;
-  /** vp 路径输入结束（失焦）或手动检测后，重新做一次只读自检 */
-  onVpPathCommit: () => void;
+  vpPath: string | null;
+  /** 启动自检结果：自动探测到的可执行文件与版本，只读展示 */
+  ensure: VpEnsureResult | null;
+  ensureBusy: boolean;
+  onRecheck: () => void;
   theme: ThemeMode;
   onThemeChange: (mode: ThemeMode) => void;
 }
 
+/** 从完整可执行文件路径取所在目录（同时兼容 / 与 \ 分隔符） */
+function dirnameOf(path: string | null | undefined): string | null {
+  if (!path) return null;
+  const cut = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
+  return cut > 0 ? path.slice(0, cut) : path;
+}
+
 export default function SettingsView({
   config,
-  onPatch,
   notify,
   onToggleAlwaysOnTop,
-  onVpPathCommit,
+  vpPath,
+  ensure,
+  ensureBusy,
+  onRecheck,
   theme,
   onThemeChange,
 }: Props) {
   const [dir, setDir] = useState<string>("");
-  const [probing, setProbing] = useState(false);
-  const [probeText, setProbeText] = useState<string>("");
+  const [audit, setAudit] = useState<PathAudit | null>(null);
+  const [auditError, setAuditError] = useState<string | null>(null);
 
-  const showDir = async () => {
-    try {
-      setDir(await configDir());
-    } catch (e) {
-      notify("error", "读取配置目录失败", errText(e));
-    }
-  };
+  /** 配置目录直接展示，不需要先点一次按钮 */
+  useEffect(() => {
+    void configDir()
+      .then(setDir)
+      .catch((e) => notify("error", "读取配置目录失败", errText(e)));
+  }, [notify]);
 
-  const browseVp = async () => {
-    const picked = await pickVpBinary();
-    if (picked) onPatch({ vpPath: picked });
-  };
+  /** 只读审计：每次自检结果变化后重新读取 PATH 中的 vp 副本，不缓存 */
+  useEffect(() => {
+    let alive = true;
+    void envPathAudit(vpPath)
+      .then((a) => {
+        if (alive) {
+          setAudit(a);
+          setAuditError(null);
+        }
+      })
+      .catch((e) => {
+        if (alive) setAuditError(errText(e));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [vpPath, ensure]);
 
-  const probe = async () => {
-    setProbing(true);
-    try {
-      const p = await vpProbe(config.vpPath);
-      if (!p.verified) {
-        const text = `已找到可执行文件，但无法确认是 Vite+：\n${p.path}\n请重新选择 vp.exe / vp.cmd。`;
-        setProbeText(text);
-        notify("error", "所选程序不是 Vite+", p.path);
-        return;
-      }
-      setProbeText(
-        [`vp ${p.version ?? "（无法读取版本）"}`, p.path, ...p.warnings].filter(Boolean).join("\n"),
-      );
-      notify("success", "已定位 Vite+", p.path);
-      onVpPathCommit();
-    } catch (e) {
-      setProbeText(errText(e));
-      notify("error", "未找到 vp", errText(e));
-    } finally {
-      setProbing(false);
-    }
-  };
+  const vpDir = dirnameOf(ensure?.path);
+  const copies = audit?.vp_candidates ?? [];
+  const multiple = copies.length > 1;
+  const verified = !!ensure?.ok && !!ensure?.compliant;
 
   return (
-    <div className="env-view settings-view">
+    <div className="env-view settings-view flow-view">
       <div className="page-head">
         <div className="page-title-row">
           <span className="page-icon">
@@ -162,33 +169,71 @@ export default function SettingsView({
             <span className="section-icon">
               <Icon name="bolt" size={14} />
             </span>
-            <h4 className="section-title">Vite+（vp）可执行文件</h4>
-            <span className="section-count">留空自动探测</span>
+            <h4 className="section-title">Vite+ 可执行文件</h4>
+            <span className="section-count">自动检测</span>
           </div>
-          <div className="row">
-            <input
-              className="input mono"
-              placeholder="留空则自动探测（PATH → ~/.vite-plus/bin）"
-              value={config.vpPath ?? ""}
-              onChange={(e) => onPatch({ vpPath: e.target.value || null })}
-              onBlur={() => onVpPathCommit()}
-            />
-            <button className="btn" onClick={() => void browseVp()}>
-              <Icon name="folder" size={14} />
-              浏览
-            </button>
-            <button className="btn" disabled={probing} onClick={() => void probe()}>
-              <Icon name="search" size={14} />
-              {probing ? "检测中…" : "检测"}
-            </button>
+
+          <div className="detail-list">
+            <div className="detail-row">
+              <span>所在目录</span>
+              <code className="path-text ellipsis" title={vpDir ?? undefined}>
+                {vpDir ?? (ensureBusy ? "检测中…" : "未找到")}
+              </code>
+            </div>
+            <div className="detail-row">
+              <span>可执行文件</span>
+              <code className="path-text ellipsis" title={ensure?.path ?? undefined}>
+                {ensure?.path ?? "—"}
+              </code>
+            </div>
+            <div className="detail-row">
+              <span>版本 / 状态</span>
+              <span>
+                {ensure?.version ? `v${ensure.version}` : "—"}
+                <span className={`tag ${verified ? "ok" : "warn"}`} style={{ marginLeft: 8 }}>
+                  {verified ? "已识别" : ensureBusy ? "检测中" : "未通过自检"}
+                </span>
+              </span>
+            </div>
+            <div className="detail-row">
+              <span>PATH 中的副本</span>
+              <span>{copies.length ? `${copies.length} 个` : audit ? "1 个" : "检测中…"}</span>
+            </div>
           </div>
-          {probeText ? (
-            <div className="console" style={{ marginTop: 10 }}>
-              {probeText}
+
+          {multiple ? (
+            <div className="inline-warn danger" style={{ marginTop: 10 }}>
+              检测到多个 vp 副本，不同终端可能解析到不同版本：
+              {copies.map((c) => (
+                <div key={c.path} className="muted small">
+                  · {c.path}
+                  {c.version ? ` (v${c.version})` : ""}
+                  {c.primary ? " · 当前使用" : ""}
+                </div>
+              ))}
             </div>
           ) : null}
+
+          {audit?.warnings.length ? (
+            <div className="inline-warn" style={{ marginTop: 10 }}>
+              {audit.warnings.join("；")}
+            </div>
+          ) : null}
+          {auditError ? (
+            <div className="inline-warn danger" style={{ marginTop: 10 }}>
+              副本审计失败：{auditError}
+            </div>
+          ) : null}
+
+          <div className="row settings-actions">
+            <button className="btn" onClick={onRecheck} disabled={ensureBusy}>
+              <Icon name="refresh" size={14} />
+              {ensureBusy ? "检测中…" : "重新检测"}
+            </button>
+          </div>
           <div className="hint">
-            留空自动探测；打包后 PATH 中找不到 <code>vp</code> 时可手动指定。
+            可执行文件由应用自动探测并校验身份，无需手动指定。升级 Vite+ 请在命令行执行
+            <code> vp upgrade</code>，客户端不再提供升级入口。
           </div>
         </div>
 
@@ -200,25 +245,31 @@ export default function SettingsView({
             <h4 className="section-title">数据</h4>
           </div>
           <div className="row">
-            <button className="btn" onClick={() => void showDir()}>
-              <Icon name="folder" size={14} />
-              显示配置目录
+            <code className="input mono readonly" title={dir}>
+              {dir || "读取中…"}
+            </code>
+            <button
+              className="btn"
+              disabled={!dir}
+              onClick={() =>
+                void launchTarget(dir).catch((e) => notify("error", "打开失败", errText(e)))
+              }
+            >
+              <Icon name="external" size={14} />
+              打开
             </button>
-            {dir ? (
-              <>
-                <code className="input mono readonly">{dir}</code>
-                <button
-                  className="btn"
-                  onClick={() =>
-                    void launchTarget(dir).catch((e) => notify("error", "打开失败", errText(e)))
-                  }
-                >
-                  <Icon name="external" size={14} />
-                  打开
-                </button>
-              </>
-            ) : null}
           </div>
+          <div className="detail-list">
+            <div className="detail-row">
+              <span>配置文件</span>
+              <code className="path-text">config.json</code>
+            </div>
+            <div className="detail-row">
+              <span>自动备份</span>
+              <code className="path-text">config.json.bak</code>
+            </div>
+          </div>
+          <div className="hint">应用配置、自动备份都存放在这个目录。</div>
         </div>
 
         <div className="card settings-card settings-about">
@@ -239,8 +290,8 @@ export default function SettingsView({
             </div>
           </div>
           <div className="hint">
-            基于 Vite+ <b>1.4.0+</b> 的 <code>vp env</code> 命令；启动只检测， 安装 /
-            升级需在环境页确认，不会自动修改全局环境。
+            基于 Vite+ <b>1.6.0</b> 的 <code>vp env</code>{" "}
+            命令；「系统」管理全局环境，「项目」只作用于所选目录。
           </div>
         </div>
       </div>

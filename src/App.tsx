@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { APP_VERSION } from "./lib/appMeta";
 import TitleBar from "./components/TitleBar";
-import EnvManagerView, { type EnvTab } from "./components/EnvManagerView";
+import SystemView from "./components/SystemView";
+import ProjectView from "./components/ProjectView";
 import SettingsView from "./components/SettingsView";
 import ConfigRecovery from "./components/ConfigRecovery";
 import Toasts, { type Toast, type ToastKind } from "./components/Toasts";
@@ -26,7 +27,7 @@ import {
   type VpStatusPayload,
 } from "./lib/api";
 
-type View = EnvTab | "settings";
+type View = "system" | "project" | "settings";
 
 interface NavItem {
   id: View;
@@ -37,20 +38,68 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
-  { id: "overview", label: "概览", short: "概览", icon: "grid" },
-  { id: "env", label: "环境", short: "环境", icon: "layers" },
+  { id: "system", label: "系统", short: "系统", icon: "layers" },
   { id: "project", label: "项目", short: "项目", icon: "pin" },
-  { id: "diagnostics", label: "诊断", short: "诊断", icon: "shield" },
   { id: "settings", label: "设置", short: "设置", icon: "settings" },
 ];
 
 const SUBTITLES: Record<View, string> = {
-  overview: "Vite+ 环境总览",
-  env: "版本与安装管理",
-  project: "项目 Pin 与目录",
-  diagnostics: "诊断与托管状态",
+  system: "全局 Vite+ 环境管理",
+  project: "所选项目的环境配置",
   settings: "设置",
 };
+
+/** 界面设计基准尺寸（逻辑像素），与 Rust 端初始窗口尺寸保持一致 */
+const DESIGN_SIZE = { w: 1520, h: 940 };
+/** 可用区域低于该值时布局会明显拥挤，提示用户调整分辨率 / 系统缩放 */
+const MIN_VIEW = { w: 1480, h: 900 };
+
+function ScreenSizeNotice({
+  width,
+  height,
+  onClose,
+}: {
+  width: number;
+  height: number;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="screen-warn"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="screen-warn-title"
+    >
+      <div className="screen-warn-card">
+        <span className="screen-warn-icon" aria-hidden="true">
+          <Icon name="alert" size={20} />
+        </span>
+        <h2 className="screen-warn-title" id="screen-warn-title">
+          屏幕可用区域不足
+        </h2>
+        <p className="screen-warn-text">
+          界面按{" "}
+          <b>
+            {DESIGN_SIZE.w} × {DESIGN_SIZE.h}
+          </b>{" "}
+          设计，当前可用区域为{" "}
+          <b>
+            {width} × {height}
+          </b>{" "}
+          （逻辑像素）。
+        </p>
+        <p className="screen-warn-text">
+          建议使用 <b>1920 × 1080</b> 及以上分辨率，系统缩放保持 <b>100%</b>； 分辨率更高时（如 2560
+          × 1440）缩放最高可到 <b>125%</b>。
+        </p>
+        <p className="screen-warn-note">继续使用时部分内容需要滚动，布局可能不够完整。</p>
+        <button className="btn primary" onClick={onClose} autoFocus>
+          仍要继续使用
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function NavIcon({ item }: { item: NavItem }) {
   return <Icon name={item.icon} size={18} strokeWidth={1.6} />;
@@ -60,24 +109,38 @@ export default function App() {
   const [config, setConfig] = useState<Config | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
   const [backupPath, setBackupPath] = useState<string | null>(null);
-  const [view, setView] = useState<View>("overview");
+  const [view, setView] = useState<View>("system");
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [vpEnsureResult, setVpEnsureResult] = useState<VpEnsureResult | null>(null);
   const [vpEnsureBusy, setVpEnsureBusy] = useState(false);
   const [vpEnsurePhase, setVpEnsurePhase] = useState<VpStatusPayload | null>(null);
   const [theme, setTheme] = useState<ThemeMode>(() => readThemeMode());
+  const [viewport, setViewport] = useState(() => ({
+    w: window.innerWidth,
+    h: window.innerHeight,
+  }));
+  const [sizeWarnClosed, setSizeWarnClosed] = useState(false);
   const ensureSeq = useRef(0);
   const startupChecked = useRef(false);
   const timers = useRef<number[]>([]);
 
   useEffect(() => () => timers.current.forEach((t) => window.clearTimeout(t)), []);
 
+  // 窗口不可拉伸，只有工作区装不下设计尺寸时才会被收缩，用于提示分辨率 / 缩放不达标
+  useEffect(() => {
+    const onResize = () => setViewport({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const sizeTooSmall = viewport.w < MIN_VIEW.w || viewport.h < MIN_VIEW.h;
+
   const notify = useCallback((kind: ToastKind, title: string, text?: string) => {
     const id = uid();
     setToasts((prev) => [...prev, { id, kind, title, text }]);
     const t = window.setTimeout(
       () => setToasts((prev) => prev.filter((x) => x.id !== id)),
-      kind === "error" ? 8000 : 3800,
+      kind === "error" ? 8000 : 2400,
     );
     timers.current.push(t);
   }, []);
@@ -113,7 +176,7 @@ export default function App() {
         if (runId !== ensureSeq.current) return;
         setVpEnsureResult(r);
         if (!r.ok || !r.compliant) {
-          notify("error", "Vite+ 环境自检失败", r.error ?? "请到诊断页查看详情");
+          notify("error", "Vite+ 环境自检失败", r.error ?? "请到设置页查看可执行文件信息");
         } else if (r.installed) {
           notify("success", "已安装 Vite+", `v${r.version ?? ""} 已就绪`);
         } else if (r.upgraded) {
@@ -340,20 +403,18 @@ export default function App() {
           {view === "settings" ? (
             <SettingsView
               config={config}
-              onPatch={patch}
               notify={notify}
               onToggleAlwaysOnTop={toggleAlwaysOnTop}
-              onVpPathCommit={() => void runVpEnsure(false)}
+              vpPath={config.vpPath ?? null}
+              ensure={vpEnsureResult}
+              ensureBusy={vpEnsureBusy}
+              onRecheck={() => void runVpEnsure(false)}
               theme={theme}
               onThemeChange={changeTheme}
             />
-          ) : (
-            <EnvManagerView
-              tab={view}
-              onTabChange={setView}
+          ) : view === "system" ? (
+            <SystemView
               vpPath={config.vpPath ?? null}
-              projectDir={config.lastProjectDir ?? null}
-              onProjectDirChange={(dir) => patch({ lastProjectDir: dir })}
               notify={notify}
               ensure={vpEnsureResult}
               ensureBusy={vpEnsureBusy}
@@ -361,10 +422,24 @@ export default function App() {
               onRecheck={() => void runVpEnsure(false)}
               onRepair={() => void runVpEnsure(true)}
             />
+          ) : (
+            <ProjectView
+              vpPath={config.vpPath ?? null}
+              projectDir={config.lastProjectDir ?? null}
+              onProjectDirChange={(dir) => patch({ lastProjectDir: dir })}
+              notify={notify}
+            />
           )}
         </main>
       </div>
       <Toasts toasts={toasts} onClose={(id) => setToasts((p) => p.filter((t) => t.id !== id))} />
+      {sizeTooSmall && !sizeWarnClosed ? (
+        <ScreenSizeNotice
+          width={viewport.w}
+          height={viewport.h}
+          onClose={() => setSizeWarnClosed(true)}
+        />
+      ) : null}
     </div>
   );
 }

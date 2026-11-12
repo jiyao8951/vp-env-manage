@@ -19,6 +19,7 @@ function clock(ts: number): string {
  */
 export default function ConsolePanel({ text, source, at, onClear }: Props) {
   const [copied, setCopied] = useState(false);
+  const empty = text.trim().length === 0;
 
   const copy = async () => {
     try {
@@ -40,17 +41,19 @@ export default function ConsolePanel({ text, source, at, onClear }: Props) {
         {source ? <span className="console-source">{source}</span> : null}
         {at ? <span className="console-time">· {clock(at)}</span> : null}
         <div className="console-panel-actions">
-          <button className="btn ghost sm" onClick={() => void copy()}>
+          <button className="btn ghost sm" onClick={() => void copy()} disabled={empty}>
             <Icon name={copied ? "check" : "layers-stack"} size={12} />
             {copied ? "已复制" : "复制"}
           </button>
-          <button className="btn ghost sm" onClick={onClear}>
+          <button className="btn ghost sm" onClick={onClear} disabled={empty}>
             <Icon name="x" size={12} />
             清除
           </button>
         </div>
       </div>
-      <pre className="console">{text}</pre>
+      <pre className={empty ? "console empty" : "console"}>
+        {empty ? "暂无输出 · 安装、卸载、切换默认版本等操作的结果会显示在这里" : text}
+      </pre>
     </section>
   );
 }
